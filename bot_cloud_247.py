@@ -22,12 +22,15 @@ def start_health_server():
     try:
         port = int(os.environ.get("PORT", 10000))
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        print(f"[HEALTH CHECK SERVER] Rodando na porta {port}")
         server.serve_forever()
     except Exception as e:
         print(f"[WARN HEALTH SERVER]: {e}")
 
+# Inicia o servidor HTTP em background para liberar a porta no Render
 threading.Thread(target=start_health_server, daemon=True).start()
 
+# Configurações do Robô Nuvem 24/7
 TELEGRAM_TOKEN = "8598409500:AAFQrj1Igkm1c5VwvFi3qvHeKqwTqu5w3io"
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50DkF-BoFRC1qFB-uKyVJA4Df76H1sAvV6tJPlcd0KP/exec"
 
