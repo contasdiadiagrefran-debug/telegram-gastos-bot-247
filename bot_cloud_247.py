@@ -4,8 +4,30 @@ import json
 import os
 import re
 import datetime
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Configurações do Robô Nuvem 24/7
+# Servidor HTTP simples para o Health Check do Render Web Service (Free Tier)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK - Bot Gastos 24/7 Ativo")
+
+    def log_message(self, format, *args):
+        return
+
+def start_health_server():
+    try:
+        port = int(os.environ.get("PORT", 10000))
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server.serve_forever()
+    except Exception as e:
+        print(f"[WARN HEALTH SERVER]: {e}")
+
+threading.Thread(target=start_health_server, daemon=True).start()
+
 TELEGRAM_TOKEN = "8598409500:AAFQrj1Igkm1c5VwvFi3qvHeKqwTqu5w3io"
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50DkF-BoFRC1qFB-uKyVJA4Df76H1sAvV6tJPlcd0KP/exec"
 
@@ -16,36 +38,12 @@ PROCESSED_UPDATES = set()
 RECENT_MESSAGES_CACHE = {}
 
 CATEGORIA_KEYWORDS = {
-    "Alimentação": [
-        "almoço", "almoco", "jantar", "lanche", "restaurante", "mercado", "supermercado",
-        "padaria", "comida", "ifood", "rappi", "pizza", "hamburguer", "açaí", "acai",
-        "feira", "açougue", "acougue", "hortifruti", "mcdonalds", "outback", "sorvete",
-        "doce", "cafe", "café", "pao", "pão", "churrasco"
-    ],
-    "Transporte": [
-        "uber", "99", "taxi", "gasolina", "combustivel", "combustível", "estacionamento",
-        "pedagio", "pedágio", "mecanico", "mecânico", "lavagem", "postocombustivel", "metrô",
-        "metro", "ônibus", "onibus", "abastecimento", "abastecer", "posto", "etanol",
-        "diesel", "gnv", "troca de oleo", "troca de óleo", "pneu", "alinhamento", "balanceamento"
-    ],
-    "Saúde & Farmácia": [
-        "farmacia", "farmácia", "remedio", "remédio", "drogaria", "consulta", "exame",
-        "dentista", "hospital", "psicologo", "laboratorio", "medico", "médico", "drogasil",
-        "drogaraia", "pague menos"
-    ],
-    "Lazer & Pessoal": [
-        "cinema", "bar", "cerveja", "chope", "chopp", "shopping",
-        "roupa", "calcado", "calçado", "salao", "salão", "barbeiro", "cabeleireiro",
-        "perfume", "ingresso", "festa", "presente", "jogo", "viagem", "hotel"
-    ],
-    "Moradia & Casa": [
-        "casa", "reparo", "ferragem", "decoração", "decoracao", "limpeza",
-        "utensilio", "utensílio", "jardim", "moveis", "móveis", "leroy", "material construcao"
-    ],
-    "Serviços & Assinaturas": [
-        "netflix", "spotify", "prime", "amazon", "youtube", "cursinho", "internet",
-        "recarga", "celular", "plano", "anuidade", "ipva", "iptu", "seguro"
-    ]
+    "Alimentação": ["almoço", "almoco", "jantar", "lanche", "restaurante", "mercado", "supermercado", "padaria", "comida", "ifood", "rappi", "pizza", "hamburguer", "açaí", "acai", "feira", "açougue", "acougue", "hortifruti", "mcdonalds", "outback", "sorvete", "doce", "cafe", "café", "pao", "pão", "churrasco"],
+    "Transporte": ["uber", "99", "taxi", "gasolina", "combustivel", "combustível", "estacionamento", "pedagio", "pedágio", "mecanico", "mecânico", "lavagem", "postocombustivel", "metrô", "metro", "ônibus", "onibus", "abastecimento", "abastecer", "posto", "etanol", "diesel", "gnv", "troca de oleo", "troca de óleo", "pneu", "alinhamento", "balanceamento"],
+    "Saúde & Farmácia": ["farmacia", "farmácia", "remedio", "remédio", "drogaria", "consulta", "exame", "dentista", "hospital", "psicologo", "laboratorio", "medico", "médico", "drogasil", "drogaraia", "pague menos"],
+    "Lazer & Pessoal": ["cinema", "bar", "cerveja", "chope", "chopp", "shopping", "roupa", "calcado", "calçado", "salao", "salão", "barbeiro", "cabeleireiro", "perfume", "ingresso", "festa", "presente", "jogo", "viagem", "hotel"],
+    "Moradia & Casa": ["casa", "reparo", "ferragem", "decoração", "decoracao", "limpeza", "utensilio", "utensílio", "jardim", "moveis", "móveis", "leroy", "material construcao"],
+    "Serviços & Assinaturas": ["netflix", "spotify", "prime", "amazon", "youtube", "cursinho", "internet", "recarga", "celular", "plano", "anuidade", "ipva", "iptu", "seguro"]
 }
 
 CATEGORIA_EMOJIS = {
