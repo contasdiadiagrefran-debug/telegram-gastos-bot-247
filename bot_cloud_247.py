@@ -27,7 +27,6 @@ def start_health_server():
     except Exception as e:
         print(f"[WARN HEALTH SERVER]: {e}")
 
-# Inicia o servidor HTTP em background para liberar a porta no Render
 threading.Thread(target=start_health_server, daemon=True).start()
 
 # Configurações do Robô Nuvem 24/7
@@ -39,6 +38,11 @@ GASTOS_FILE = os.path.join(BASE_DIR, "gastos_247.json")
 
 PROCESSED_UPDATES = set()
 RECENT_MESSAGES_CACHE = {}
+
+# Função para obter sempre a hora exata de Brasília (UTC-3), independente do servidor
+def get_now_br():
+    tz_br = datetime.timezone(datetime.timedelta(hours=-3))
+    return datetime.datetime.now(tz=tz_br)
 
 CATEGORIA_KEYWORDS = {
     "Alimentação": ["almoço", "almoco", "jantar", "lanche", "restaurante", "mercado", "supermercado", "padaria", "comida", "ifood", "rappi", "pizza", "hamburguer", "açaí", "acai", "feira", "açougue", "acougue", "hortifruti", "mcdonalds", "outback", "sorvete", "doce", "cafe", "café", "pao", "pão", "churrasco"],
@@ -110,7 +114,7 @@ def parse_expense(text, message_id=None):
         if categoria != "Outros / Diversos":
             break
 
-    agora = datetime.datetime.now()
+    agora = get_now_br()
     exp_id = message_id if message_id else int(agora.timestamp() * 1000)
     
     return {
@@ -144,7 +148,7 @@ def format_valor(val):
     return f"R$ {val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 def gerar_resumo_do_dia():
-    hoje_str = datetime.datetime.now().strftime("%d/%m/%Y")
+    hoje_str = get_now_br().strftime("%d/%m/%Y")
     gastos = load_gastos()
     gastos_hoje = [g for g in gastos if g.get("data_curta") == hoje_str]
     
