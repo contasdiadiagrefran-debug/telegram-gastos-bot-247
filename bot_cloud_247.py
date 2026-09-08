@@ -33,10 +33,7 @@ threading.Thread(target=start_health_server, daemon=True).start()
 TELEGRAM_TOKEN = "8598409500:AAFQrj1Igkm1c5VwvFi3qvHeKqwTqu5w3io"
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50DkF-BoFRC1qFB-uKyVJA4Df76H1sAvV6tJPlcd0KP/exec"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-GASTOS_FILE = os.path.join(BASE_DIR, "gastos_247.json")
-
-# Armazenamento em memória (Ultra-Rápido e 100% Estável no Render)
+# Armazenamento em memória local (Cache ultra-rápido)
 GASTOS_MEMORIA = []
 PROCESSED_UPDATES = set()
 PROCESSED_MESSAGES = set()
@@ -110,12 +107,12 @@ def parse_expense(text, message_id=None):
         "canal": "Telegram Nuvem 24/7"
     }
 
-# Envio assíncrono para o Google Sheets (NUNCA trava a resposta do chat!)
+# Envio assíncrono para o Google Sheets
 def post_to_google_sheets_async(expense):
     def _worker():
         try:
-            requests.post(SHEETS_URL, json=expense, timeout=10, allow_redirects=False)
-            print(f"[OK ASYNC SHEETS]: {expense['descricao']}")
+            resp = requests.post(SHEETS_URL, json=expense, timeout=15)
+            print(f"[OK ASYNC SHEETS]: {expense['descricao']} (Status {resp.status_code})")
         except Exception as e:
             print(f"[ERRO GOOGLE SHEETS ASYNC]: {e}")
             
@@ -136,23 +133,37 @@ def format_valor(val):
 
 def gerar_resumo_do_dia():
     hoje_str = get_now_br().strftime("%d/%m/%Y")
-    gastos_hoje = [g for g in GASTOS_MEMORIA if g.get("data_curta") == hoje_str]
+    gastos_hoje = []
     
+    # 1. Tenta buscar os gastos persistidos diretamente do Google Sheets
+    try:
+        resp = requests.get(SHEETS_URL, timeout=10)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if res_json.get("ok"):
+                gastos_hoje = res_json.get("data", [])
+    except Exception as e:
+        print(f"[WARN FETCH SHEETS RESUMO]: {e}")
+
+    # 2. Se a planilha não responder ou estiver vazia, junta com os dados em memória local
+    if not gastos_hoje:
+        gastos_hoje = [g for g in GASTOS_MEMORIA if g.get("data_curta") == hoje_str]
+
     if not gastos_hoje:
         return (
             f"📊 <b>RESUMO DE GASTOS DO DIA ({hoje_str})</b>\n\n"
-            "Nenhum gasto foi registrado hoje ainda nesta sessão!\n\n"
+            "Nenhum gasto foi registrado hoje ainda!\n\n"
             "💡 <b>Para registrar um gasto, envie por exemplo:</b>\n"
             "• <code>35 almoço</code>\n"
             "• <code>70 gasolina</code>\n"
             "• <code>18.50 uber</code>"
         )
     
-    total_dia = sum(g["valor"] for g in gastos_hoje)
+    total_dia = sum(float(g.get("valor", 0)) for g in gastos_hoje)
     por_categoria = {}
     for g in gastos_hoje:
         cat = g.get("categoria", "Outros / Diversos")
-        por_categoria[cat] = por_categoria.get(cat, 0.0) + g["valor"]
+        por_categoria[cat] = por_categoria.get(cat, 0.0) + float(g.get("valor", 0))
     
     msg_lines = [
         f"📊 <b>RESUMO DE GASTOS DO DIA ({hoje_str})</b>",
@@ -161,12 +172,13 @@ def gerar_resumo_do_dia():
     ]
     
     for g in gastos_hoje:
-        hora = g.get("hora_curta", "")
+        hora = g.get("hora_curta") or (g.get("data_hora", "").split(" ")[1][:5] if " " in g.get("data_hora", "") else "")
         desc = g.get("descricao", "Gasto")
-        val = format_valor(g["valor"])
-        cat = g.get("categoria", "Outros")
+        val = format_valor(float(g.get("valor", 0)))
+        cat = g.get("categoria", "Outros / Diversos")
         emoji = CATEGORIA_EMOJIS.get(cat, "📌")
-        msg_lines.append(f"• <code>{hora}</code> {emoji} <b>{desc}</b>: {val} <i>({cat})</i>")
+        hora_display = f"<code>{hora}</code> " if hora else ""
+        msg_lines.append(f"• {hora_display}{emoji} <b>{desc}</b>: {val} <i>({cat})</i>")
         
     msg_lines.append("")
     msg_lines.append("🏷️ <b>Total por Categoria:</b>")
