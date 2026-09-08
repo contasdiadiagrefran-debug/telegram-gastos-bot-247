@@ -37,9 +37,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GASTOS_FILE = os.path.join(BASE_DIR, "gastos_247.json")
 
 PROCESSED_UPDATES = set()
-RECENT_MESSAGES_CACHE = {}
+PROCESSED_MESSAGE_IDS = set()
 
-# Função para obter sempre a hora exata de Brasília (UTC-3), independente do servidor
 def get_now_br():
     tz_br = datetime.timezone(datetime.timedelta(hours=-3))
     return datetime.datetime.now(tz=tz_br)
@@ -129,7 +128,6 @@ def parse_expense(text, message_id=None):
         "canal": "Telegram Nuvem 24/7"
     }
 
-# Envio assíncrono para o Google Sheets (NUNCA trava a resposta do chat!)
 def post_to_google_sheets_async(expense):
     def _worker():
         try:
@@ -243,21 +241,17 @@ def run_bot():
                         if not msg:
                             continue
 
+                        msg_id = msg.get("message_id")
+                        if msg_id in PROCESSED_MESSAGE_IDS:
+                            continue
+                        PROCESSED_MESSAGE_IDS.add(msg_id)
+
                         chat_id = msg["chat"]["id"]
                         text = msg.get("text", "").strip()
                         sender = msg.get("from", {}).get("first_name", "Usuário")
-                        msg_id = msg.get("message_id")
 
                         if not text:
                             continue
-
-                        now_ts = time.time()
-                        cache_key = (chat_id, text)
-                        if cache_key in RECENT_MESSAGES_CACHE:
-                            if now_ts - RECENT_MESSAGES_CACHE[cache_key] < 3:
-                                print(f"[IGNORADO DUPLICADO POR TEMPO]: '{text}' de {sender}")
-                                continue
-                        RECENT_MESSAGES_CACHE[cache_key] = now_ts
 
                         text_lower = text.lower()
 
@@ -287,8 +281,6 @@ def run_bot():
                         expense = parse_expense(text, message_id=msg_id)
                         if expense:
                             save_gasto_local(expense)
-                            
-                            # Sincronização em segundo plano (NUNCA trava o chat!)
                             post_to_google_sheets_async(expense)
                             
                             val_fmt = format_valor(expense['valor'])
