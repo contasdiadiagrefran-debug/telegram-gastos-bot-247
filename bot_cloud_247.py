@@ -5,6 +5,7 @@ import os
 import re
 import datetime
 import threading
+import html
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Servidor HTTP simples para o Health Check do Render Web Service
@@ -14,6 +15,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(b"OK - Bot Gastos 24/7 Ativo")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
 
     def log_message(self, format, *args):
         return
@@ -37,6 +43,11 @@ SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50
 GASTOS_MEMORIA = []
 PROCESSED_UPDATES = set()
 PROCESSED_MESSAGES = set()
+
+def escape_html(text):
+    if not text:
+        return ""
+    return html.escape(str(text))
 
 # Função para obter sempre a hora exata de Brasília (UTC-3), independente do servidor
 def get_now_br():
@@ -124,7 +135,13 @@ def send_telegram(token, chat_id, text, parse_mode="HTML"):
         payload = {"chat_id": chat_id, "text": text}
         if parse_mode:
             payload["parse_mode"] = parse_mode
-        requests.post(url, json=payload, timeout=8)
+        resp = requests.post(url, json=payload, timeout=8)
+        
+        # Fallback de segurança: Se o Telegram recusar a formatação HTML, reenvia como texto puro
+        if resp.status_code != 200 and parse_mode:
+            print(f"[WARN TELEGRAM SEND] Erro HTML {resp.status_code}. Tentando texto puro...")
+            payload.pop("parse_mode", None)
+            requests.post(url, json=payload, timeout=8)
     except Exception as e:
         print(f"[ERRO TELEGRAM SEND]: {e}")
 
@@ -173,18 +190,20 @@ def gerar_resumo_do_dia():
     
     for g in gastos_hoje:
         hora = g.get("hora_curta") or (g.get("data_hora", "").split(" ")[1][:5] if " " in g.get("data_hora", "") else "")
-        desc = g.get("descricao", "Gasto")
+        desc = escape_html(g.get("descricao", "Gasto"))
         val = format_valor(float(g.get("valor", 0)))
-        cat = g.get("categoria", "Outros / Diversos")
-        emoji = CATEGORIA_EMOJIS.get(cat, "📌")
-        hora_display = f"<code>{hora}</code> " if hora else ""
-        msg_lines.append(f"• {hora_display}{emoji} <b>{desc}</b>: {val} <i>({cat})</i>")
+        cat_raw = g.get("categoria", "Outros / Diversos")
+        cat_esc = escape_html(cat_raw)
+        emoji = CATEGORIA_EMOJIS.get(cat_raw, "📌")
+        hora_display = f"<code>{escape_html(hora)}</code> " if hora else ""
+        msg_lines.append(f"• {hora_display}{emoji} <b>{desc}</b>: {val} <i>({cat_esc})</i>")
         
     msg_lines.append("")
     msg_lines.append("🏷️ <b>Total por Categoria:</b>")
-    for cat, val in por_categoria.items():
-        emoji = CATEGORIA_EMOJIS.get(cat, "📌")
-        msg_lines.append(f"• {emoji} <b>{cat}</b>: {format_valor(val)}")
+    for cat_raw, val in por_categoria.items():
+        emoji = CATEGORIA_EMOJIS.get(cat_raw, "📌")
+        cat_esc = escape_html(cat_raw)
+        msg_lines.append(f"• {emoji} <b>{cat_esc}</b>: {format_valor(val)}")
         
     msg_lines.append("")
     msg_lines.append(f"💰 <b>TOTAL GERAL DO DIA:</b> <b>{format_valor(total_dia)}</b>")
@@ -267,8 +286,8 @@ def run_bot():
                             val_fmt = format_valor(expense['valor'])
                             reply_msg = (
                                 f"✅ <b>Gasto Anotado com Sucesso! (24/7 Nuvem)</b>\n\n"
-                                f"📌 <b>Item:</b> {expense['descricao']}\n"
-                                f"🏷️ <b>Categoria:</b> {expense['categoria']}\n"
+                                f"📌 <b>Item:</b> {escape_html(expense['descricao'])}\n"
+                                f"🏷️ <b>Categoria:</b> {escape_html(expense['categoria'])}\n"
                                 f"💵 <b>Valor:</b> {val_fmt}\n"
                                 f"📅 <b>Data:</b> {expense['data_hora']}\n\n"
                                 f"☁️ <i>Sincronizando no Google Sheets...</i>"
