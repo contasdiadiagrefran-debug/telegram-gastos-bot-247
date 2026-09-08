@@ -129,18 +129,24 @@ def parse_expense(text, message_id=None):
         "canal": "Telegram Nuvem 24/7"
     }
 
-def post_to_google_sheets(expense):
-    try:
-        r = requests.post(SHEETS_URL, json=expense, timeout=10, allow_redirects=False)
-        return r.status_code in [200, 302]
-    except Exception as e:
-        print(f"[ERRO GOOGLE SHEETS]: {e}")
-        return False
+# Envio assíncrono para o Google Sheets (NUNCA trava a resposta do chat!)
+def post_to_google_sheets_async(expense):
+    def _worker():
+        try:
+            requests.post(SHEETS_URL, json=expense, timeout=10, allow_redirects=False)
+            print(f"[OK ASYNC SHEETS]: {expense['descricao']}")
+        except Exception as e:
+            print(f"[ERRO GOOGLE SHEETS ASYNC]: {e}")
+            
+    threading.Thread(target=_worker, daemon=True).start()
 
-def send_telegram(token, chat_id, text):
+def send_telegram(token, chat_id, text, parse_mode="HTML"):
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+        payload = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"[ERRO TELEGRAM SEND]: {e}")
 
@@ -154,12 +160,12 @@ def gerar_resumo_do_dia():
     
     if not gastos_hoje:
         return (
-            f"📊 *RESUMO DE GASTOS DO DIA ({hoje_str})*\n\n"
+            f"📊 <b>RESUMO DE GASTOS DO DIA ({hoje_str})</b>\n\n"
             "Nenhum gasto foi registrado hoje ainda!\n\n"
-            "💡 *Para registrar um gasto, envie por exemplo:*\n"
-            "• `35 almoço`\n"
-            "• `70 gasolina`\n"
-            "• `18.50 uber`"
+            "💡 <b>Para registrar um gasto, envie por exemplo:</b>\n"
+            "• <code>35 almoço</code>\n"
+            "• <code>70 gasolina</code>\n"
+            "• <code>18.50 uber</code>"
         )
     
     total_dia = sum(g["valor"] for g in gastos_hoje)
@@ -169,9 +175,9 @@ def gerar_resumo_do_dia():
         por_categoria[cat] = por_categoria.get(cat, 0.0) + g["valor"]
     
     msg_lines = [
-        f"📊 *RESUMO DE GASTOS DO DIA ({hoje_str})*",
+        f"📊 <b>RESUMO DE GASTOS DO DIA ({hoje_str})</b>",
         "",
-        f"📋 *Lançamentos de Hoje ({len(gastos_hoje)} itens):*"
+        f"📋 <b>Lançamentos de Hoje ({len(gastos_hoje)} itens):</b>"
     ]
     
     for g in gastos_hoje:
@@ -180,16 +186,16 @@ def gerar_resumo_do_dia():
         val = format_valor(g["valor"])
         cat = g.get("categoria", "Outros")
         emoji = CATEGORIA_EMOJIS.get(cat, "📌")
-        msg_lines.append(f"• `{hora}` {emoji} *{desc}*: {val} _({cat})_")
+        msg_lines.append(f"• <code>{hora}</code> {emoji} <b>{desc}</b>: {val} <i>({cat})</i>")
         
     msg_lines.append("")
-    msg_lines.append("🏷️ *Total por Categoria:*")
+    msg_lines.append("🏷️ <b>Total por Categoria:</b>")
     for cat, val in por_categoria.items():
         emoji = CATEGORIA_EMOJIS.get(cat, "📌")
-        msg_lines.append(f"• {emoji} *{cat}*: {format_valor(val)}")
+        msg_lines.append(f"• {emoji} <b>{cat}</b>: {format_valor(val)}")
         
     msg_lines.append("")
-    msg_lines.append(f"💰 *TOTAL GERAL DO DIA:* *{format_valor(total_dia)}*")
+    msg_lines.append(f"💰 <b>TOTAL GERAL DO DIA:</b> <b>{format_valor(total_dia)}</b>")
     
     return "\n".join(msg_lines)
 
@@ -248,7 +254,7 @@ def run_bot():
                         now_ts = time.time()
                         cache_key = (chat_id, text)
                         if cache_key in RECENT_MESSAGES_CACHE:
-                            if now_ts - RECENT_MESSAGES_CACHE[cache_key] < 5:
+                            if now_ts - RECENT_MESSAGES_CACHE[cache_key] < 3:
                                 print(f"[IGNORADO DUPLICADO POR TEMPO]: '{text}' de {sender}")
                                 continue
                         RECENT_MESSAGES_CACHE[cache_key] = now_ts
@@ -259,16 +265,16 @@ def run_bot():
                             send_telegram(
                                 TELEGRAM_TOKEN,
                                 chat_id,
-                                f"👋 Olá, *{sender}*!\n\n"
-                                "Eu sou o seu **Assistente de Gastos Diários 24/7 (Nuvem)**!\n\n"
-                                "💬 **Como enviar gastos:**\n"
+                                f"👋 Olá, <b>{sender}</b>!\n\n"
+                                "Eu sou o seu <b>Assistente de Gastos Diários 24/7 (Nuvem)</b>!\n\n"
+                                "💬 <b>Como enviar gastos:</b>\n"
                                 "Basta digitar o valor e o item:\n"
-                                "• `35 almoço`\n"
-                                "• `70 gasolina`\n"
-                                "• `18.50 uber`\n"
-                                "• `120 farmácia`\n\n"
-                                "📊 **Comandos de Resumo:**\n"
-                                "Digite `/resumo` ou `resumo` a qualquer momento para ver o relatório de hoje!"
+                                "• <code>35 almoço</code>\n"
+                                "• <code>70 gasolina</code>\n"
+                                "• <code>18.50 uber</code>\n"
+                                "• <code>120 farmácia</code>\n\n"
+                                "📊 <b>Comandos de Resumo:</b>\n"
+                                "Digite <code>/resumo</code> ou <code>resumo</code> a qualquer momento para ver o relatório de hoje!"
                             )
                             continue
 
@@ -281,28 +287,27 @@ def run_bot():
                         expense = parse_expense(text, message_id=msg_id)
                         if expense:
                             save_gasto_local(expense)
-                            synced = post_to_google_sheets(expense)
-                            val_fmt = format_valor(expense['valor'])
                             
+                            # Sincronização em segundo plano (NUNCA trava o chat!)
+                            post_to_google_sheets_async(expense)
+                            
+                            val_fmt = format_valor(expense['valor'])
                             reply_msg = (
-                                f"✅ *Gasto Anotado com Sucesso! (24/7 Nuvem)*\n\n"
-                                f"📌 **Item:** {expense['descricao']}\n"
-                                f"🏷️ **Categoria:** {expense['categoria']}\n"
-                                f"💵 **Valor:** {val_fmt}\n"
-                                f"📅 **Data:** {expense['data_hora']}\n"
+                                f"✅ <b>Gasto Anotado com Sucesso! (24/7 Nuvem)</b>\n\n"
+                                f"📌 <b>Item:</b> {expense['descricao']}\n"
+                                f"🏷️ <b>Categoria:</b> {expense['categoria']}\n"
+                                f"💵 <b>Valor:</b> {val_fmt}\n"
+                                f"📅 <b>Data:</b> {expense['data_hora']}\n\n"
+                                f"☁️ <i>Sincronizando no Google Sheets...</i>"
                             )
-                            if synced:
-                                reply_msg += "\n☁️ *Sincronizado na nova planilha do Google Sheets!*"
-                            else:
-                                reply_msg += "\n⚠️ *(Salvo localmente)*"
 
                             send_telegram(TELEGRAM_TOKEN, chat_id, reply_msg)
                         else:
                             send_telegram(
                                 TELEGRAM_TOKEN,
                                 chat_id,
-                                "💡 Não consegui entender o valor. Envie no formato: `35 almoço` ou `70.50 gasolina`.\n\n"
-                                "Ou envie `resumo` para ver os gastos de hoje!"
+                                "💡 Não consegui entender o valor. Envie no formato: <code>35 almoço</code> ou <code>70.50 gasolina</code>.\n\n"
+                                "Ou envie <code>resumo</code> para ver os gastos de hoje!"
                             )
         except Exception as err:
             print(f"[ERRO POLLING]: {err}")
