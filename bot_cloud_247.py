@@ -29,14 +29,19 @@ def start_health_server():
 
 threading.Thread(target=start_health_server, daemon=True).start()
 
+# Configurações do Robô Nuvem 24/7
 TELEGRAM_TOKEN = "8598409500:AAFQrj1Igkm1c5VwvFi3qvHeKqwTqu5w3io"
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50DkF-BoFRC1qFB-uKyVJA4Df76H1sAvV6tJPlcd0KP/exec"
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+GASTOS_FILE = os.path.join(BASE_DIR, "gastos_247.json")
 
 # Armazenamento em memória (Ultra-Rápido e 100% Estável no Render)
 GASTOS_MEMORIA = []
 PROCESSED_UPDATES = set()
 PROCESSED_MESSAGES = set()
 
+# Função para obter sempre a hora exata de Brasília (UTC-3), independente do servidor
 def get_now_br():
     tz_br = datetime.timezone(datetime.timedelta(hours=-3))
     return datetime.datetime.now(tz=tz_br)
@@ -105,13 +110,14 @@ def parse_expense(text, message_id=None):
         "canal": "Telegram Nuvem 24/7"
     }
 
+# Envio assíncrono para o Google Sheets (NUNCA trava a resposta do chat!)
 def post_to_google_sheets_async(expense):
     def _worker():
         try:
             requests.post(SHEETS_URL, json=expense, timeout=10, allow_redirects=False)
             print(f"[OK ASYNC SHEETS]: {expense['descricao']}")
         except Exception as e:
-            print(f"[ERRO SHEETS ASYNC]: {e}")
+            print(f"[ERRO GOOGLE SHEETS ASYNC]: {e}")
             
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -180,11 +186,6 @@ def run_bot():
     print("   ROBÔ TELEGRAM NUVEM 24/7 (GASTOS E PLANILHA)  ")
     print("==================================================")
     
-    try:
-        requests.get(f"{telegram_url}/deleteWebhook?drop_pending_updates=True", timeout=5)
-    except Exception:
-        pass
-
     offset = None
 
     while True:
