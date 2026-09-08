@@ -7,7 +7,7 @@ import datetime
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Servidor HTTP simples para o Health Check do Render Web Service (Free Tier)
+# Servidor HTTP simples para o Health Check do Render Web Service
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -29,15 +29,13 @@ def start_health_server():
 
 threading.Thread(target=start_health_server, daemon=True).start()
 
-# Configurações do Robô Nuvem 24/7
 TELEGRAM_TOKEN = "8598409500:AAFQrj1Igkm1c5VwvFi3qvHeKqwTqu5w3io"
 SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_1MVLegN4fwaxS4bBLVq0u50DkF-BoFRC1qFB-uKyVJA4Df76H1sAvV6tJPlcd0KP/exec"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-GASTOS_FILE = os.path.join(BASE_DIR, "gastos_247.json")
-
+# Armazenamento em memória (Ultra-Rápido e 100% Estável no Render)
+GASTOS_MEMORIA = []
 PROCESSED_UPDATES = set()
-PROCESSED_MESSAGE_IDS = set()
+PROCESSED_MESSAGES = set()
 
 def get_now_br():
     tz_br = datetime.timezone(datetime.timedelta(hours=-3))
@@ -61,27 +59,6 @@ CATEGORIA_EMOJIS = {
     "Serviços & Assinaturas": "📱",
     "Outros / Diversos": "📌"
 }
-
-def load_gastos():
-    if os.path.exists(GASTOS_FILE):
-        try:
-            with open(GASTOS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_gasto_local(expense):
-    gastos = load_gastos()
-    for g in gastos:
-        if g.get("id") == expense.get("id"):
-            return
-    gastos.append(expense)
-    try:
-        with open(GASTOS_FILE, "w", encoding="utf-8") as f:
-            json.dump(gastos, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[ERRO SALVAR JSON LOCAL]: {e}")
 
 def parse_expense(text, message_id=None):
     if not text or not text.strip():
@@ -134,7 +111,7 @@ def post_to_google_sheets_async(expense):
             requests.post(SHEETS_URL, json=expense, timeout=10, allow_redirects=False)
             print(f"[OK ASYNC SHEETS]: {expense['descricao']}")
         except Exception as e:
-            print(f"[ERRO GOOGLE SHEETS ASYNC]: {e}")
+            print(f"[ERRO SHEETS ASYNC]: {e}")
             
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -144,7 +121,7 @@ def send_telegram(token, chat_id, text, parse_mode="HTML"):
         payload = {"chat_id": chat_id, "text": text}
         if parse_mode:
             payload["parse_mode"] = parse_mode
-        requests.post(url, json=payload, timeout=5)
+        requests.post(url, json=payload, timeout=8)
     except Exception as e:
         print(f"[ERRO TELEGRAM SEND]: {e}")
 
@@ -153,13 +130,12 @@ def format_valor(val):
 
 def gerar_resumo_do_dia():
     hoje_str = get_now_br().strftime("%d/%m/%Y")
-    gastos = load_gastos()
-    gastos_hoje = [g for g in gastos if g.get("data_curta") == hoje_str]
+    gastos_hoje = [g for g in GASTOS_MEMORIA if g.get("data_curta") == hoje_str]
     
     if not gastos_hoje:
         return (
             f"📊 <b>RESUMO DE GASTOS DO DIA ({hoje_str})</b>\n\n"
-            "Nenhum gasto foi registrado hoje ainda!\n\n"
+            "Nenhum gasto foi registrado hoje ainda nesta sessão!\n\n"
             "💡 <b>Para registrar um gasto, envie por exemplo:</b>\n"
             "• <code>35 almoço</code>\n"
             "• <code>70 gasolina</code>\n"
@@ -210,22 +186,14 @@ def run_bot():
         pass
 
     offset = None
-    try:
-        r = requests.get(f"{telegram_url}/getUpdates?offset=-1", timeout=5)
-        if r.status_code == 200 and r.json().get("ok"):
-            res = r.json().get("result", [])
-            if res:
-                offset = res[-1]["update_id"] + 1
-    except Exception:
-        pass
 
     while True:
         try:
-            url = f"{telegram_url}/getUpdates?timeout=10"
+            url = f"{telegram_url}/getUpdates?timeout=20"
             if offset:
                 url += f"&offset={offset}"
 
-            resp = requests.get(url, timeout=15)
+            resp = requests.get(url, timeout=25)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("ok"):
@@ -242,9 +210,9 @@ def run_bot():
                             continue
 
                         msg_id = msg.get("message_id")
-                        if msg_id in PROCESSED_MESSAGE_IDS:
+                        if msg_id in PROCESSED_MESSAGES:
                             continue
-                        PROCESSED_MESSAGE_IDS.add(msg_id)
+                        PROCESSED_MESSAGES.add(msg_id)
 
                         chat_id = msg["chat"]["id"]
                         text = msg.get("text", "").strip()
@@ -280,7 +248,7 @@ def run_bot():
                         print(f"[NOVO GASTO {msg_id} DE {sender}]: '{text}'")
                         expense = parse_expense(text, message_id=msg_id)
                         if expense:
-                            save_gasto_local(expense)
+                            GASTOS_MEMORIA.append(expense)
                             post_to_google_sheets_async(expense)
                             
                             val_fmt = format_valor(expense['valor'])
@@ -301,10 +269,14 @@ def run_bot():
                                 "💡 Não consegui entender o valor. Envie no formato: <code>35 almoço</code> ou <code>70.50 gasolina</code>.\n\n"
                                 "Ou envie <code>resumo</code> para ver os gastos de hoje!"
                             )
+            elif resp.status_code == 409:
+                print("[WARN] Conflito de Polling. Aguardando 5s...")
+                time.sleep(5)
         except Exception as err:
             print(f"[ERRO POLLING]: {err}")
+            time.sleep(2)
 
-        time.sleep(1)
+        time.sleep(0.5)
 
 if __name__ == "__main__":
     run_bot()
